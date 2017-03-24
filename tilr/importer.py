@@ -6,6 +6,7 @@ import boto3
 from etaprogress.progress import ProgressBar
 import requests
 
+from .boundaries import Boundary
 from .compressors import Pngquant, Jpegoptim
 
 
@@ -29,6 +30,13 @@ class Importer:
     water = {
         'osm': 'c9bc878a43ceba4bb9367aabf87db2f32f1c0789',
         'satellite': None,
+    }
+
+    boundaries = {
+        # left, top, right, bottom
+        'world': Boundary(-180, 85, 180, -85),
+        'united_kingdom': Boundary(-9, 62, 2, 49.8),
+        'europe': Boundary(-13.5, 71.8, 54, 10.4),
     }
 
     def __init__(self, db_filename, s3_bucket_name, aws_access_key_id,
@@ -100,16 +108,24 @@ class Importer:
         else:
             print(f"Cannot download tile: {url}")
 
-    def __call__(self, service, zoom, boundary=None, ignore_water=True):
+    def __call__(self, service, zoom, boundary, ignore_water=True):
         count = 2 ** zoom
-        ccount = count * count
         uploaded = 0
 
-        bar = ProgressBar(ccount)
+        boundary = self.boundaries[boundary]
 
-        for row in range(0, count):
+        left, top, right, bottom = boundary.tile_bounds(zoom)
+
+        print(f'Downloading {service} tiles at zoom level {zoom}')
+        print('Boundaries:', left, top, '->', right, bottom)
+
+        total_count = (bottom - top) * (right - left)
+
+        bar = ProgressBar(total_count)
+
+        for row in range(top, bottom):
             tiles = self.get_done_tiles(service, zoom, row)
-            for col in range(0, count):
+            for col in range(left, right):
                 if col not in tiles:
                     self.download_tile(service, zoom, row, col, ignore_water)
                     uploaded += 1
@@ -120,4 +136,4 @@ class Importer:
             self.db.commit()
 
         print()
-        print(f'Total uploaded: {uploaded}/{ccount}')
+        print(f'Total uploaded: {uploaded}/{total_count}')

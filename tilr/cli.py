@@ -8,7 +8,7 @@ from .importer import Importer
 def main():
     parser = ArgumentParser()
     parser.add_argument('-c', '--config', default='config.yaml', type=FileType('r'))
-    parser.add_argument('-b', '--boundary')
+    parser.add_argument('-b', '--boundary', default='world')
     parser.add_argument('-w', '--ignore-water', default=True, action='store_false')
     parser.add_argument('service', choices=['mq', 'osm', 'satellite'])
     parser.add_argument('zoom_levels', type=int, nargs='+')
@@ -29,6 +29,6 @@ def main():
         importer(
             args.service,
             zoom_level,
-            boundary=args.boundary,
+            args.boundary,
             ignore_water=args.ignore_water
         )

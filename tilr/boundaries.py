@@ -5,11 +5,10 @@ def num2deg(xtile, ytile, zoom):
     """Convert x/y tile coordinates to latitude and longitude."""
 
     n = 2.0 ** zoom
-    ytile = n - 1 - ytile
     lon_deg = xtile / n * 360.0 - 180.0
     lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * ytile / n)))
     lat_deg = math.degrees(lat_rad)
-    return (lat_deg, lon_deg)
+    return lat_deg, lon_deg
 
 
 def deg2num(lat_deg, lon_deg, zoom):
@@ -19,40 +18,34 @@ def deg2num(lat_deg, lon_deg, zoom):
     n = 2.0 ** zoom
     xtile = int((lon_deg + 180.0) / 360.0 * n)
     ytile = int((1.0 - math.log(math.tan(lat_rad) + (1 / math.cos(lat_rad))) / math.pi) / 2.0 * n)
-    return (xtile, int(n - 1 - ytile))
+    return xtile, ytile
 
 
 class Boundary:
     """Represents a generic rectangular boundary."""
 
-    def __init__(self, left, bottom, right, top):
+    def __init__(self, left, top, right, bottom):
         self.left = left
-        self.bottom = bottom
         self.right = right
         self.top = top
+        self.bottom = bottom
 
     def tile_bounds(self, zoom_level):
         """Get x/y tile coordinates for this boundary."""
 
-        bottom_left = deg2num(self.bottom, self.left, zoom_level)
-        top_right = deg2num(self.top, self.right, zoom_level)
-        return bottom_left[0], bottom_left[1], top_right[0], top_right[1]
+        count = 2 ** zoom_level
 
-    def contains(self, x, y, zoom_level=None):
-        """
-        Check if the boundary contains the point x/y.
+        top_left = deg2num(self.top, self.left, zoom_level)
+        bottom_right = deg2num(self.bottom, self.right, zoom_level)
 
-        If ``zoom_level`` is ``None`` it is assumed that x/y will be in
-        tile coordinates, otherwise latitude and longitude.
-        """
+        left = top_left[0]
+        top = top_left[1]
+        right = bottom_right[0]
+        bottom = bottom_right[1]
 
-        if zoom_level is not None:
-            y, x = num2deg(x, y, zoom_level)
+        left = max(left, 0)
+        top = max(top, 0)
+        right = min(right + 1, count)
+        bottom = min(bottom + 1, count)
 
-        return self.left <= x <= self.right and self.bottom <= y <= self.top
-
-
-# left, bottom, right, top
-
-world = Boundary(-180, -85, 180, 85)
-united_kingdom = Boundary(-9, 49.8, 2, 62)
+        return left, top, right, bottom
