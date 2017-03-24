@@ -69,44 +69,53 @@ class Importer:
         row = self.cursor.fetchone()
         return row is not None
 
-    def get_done_tiles(self, service, zoom, row):
+    def get_done_tiles(self, service, zoom):
         self.cursor.execute("""
-            SELECT column
+            SELECT row, column
             FROM tiles
-            WHERE service = ? AND zoom = ? AND row = ?
-        """, [service, zoom, row])
+            WHERE service = ? AND zoom = ?
+        """, [service, zoom])
 
-        return list(row[0] for row in self.cursor)
+        return set(tuple(row) for row in self.cursor)
 
-    def set_done_tile(self, service, zoom, row, column, water):
-        self.cursor.execute("""
+    def set_done_tiles(self, rows):
+        self.cursor.executemany("""
             INSERT INTO tiles VALUES (?, ?, ?, ?, ?)
-        """, [service, zoom, row, column, water])
+        """, rows)
+        self.db.commit()
 
     def shasum(self, data):
         m = hashlib.sha1()
         m.update(data)
         return m.hexdigest()
 
-    def download_tile(self, service, zoom, row, column, ignore_water=True):
+    def download_tile(self, service, zoom, row, column):
         service_url = self.services[service]
-        compressor = self.compressors[service]
-        extension = self.extensions[service]
-        water = self.water[service]
 
         url = service_url.format(zoom=zoom, col=column, row=row)
         res = requests.get(url)
 
         if res.status_code == requests.codes.ok:
-            is_water = self.shasum(res.content) == water
-            if not is_water or not ignore_water:
-                data = compressor.compress(res.content)
-                key = f'tiles/{service}/{zoom}/{row}/{column}.{extension}'
-                self.bucket.upload_fileobj(io.BytesIO(data), key)
-
-            self.set_done_tile(service, zoom, row, column, is_water)
+            return res.content
         else:
             print(f"Cannot download tile: {url}")
+            return None
+
+    def is_water(self, service, data):
+        return self.shasum(data) == self.water[service]
+
+    def s3_key(self, service, zoom, row, column):
+        extension = self.extensions[service]
+        return f'tiles/{service}/{zoom}/{row}/{column}.{extension}'
+
+    def compress_tile(self, service, data):
+        compressor = self.compressors[service]
+        return compressor.compress(data)
+
+    def upload_to_s3(self, service, zoom, row, column, data):
+        data = self.compress_tile(service, data)
+        key = self.s3_key(service, zoom, row, column)
+        self.bucket.upload_fileobj(io.BytesIO(data), key)
 
     def __call__(self, service, zoom, boundary, ignore_water=True):
         count = 2 ** zoom
@@ -123,17 +132,30 @@ class Importer:
 
         bar = ProgressBar(total_count)
 
+        done_tiles = self.get_done_tiles(service, zoom)
+
+        tiles_to_be_done = []
+
         for row in range(top, bottom):
-            tiles = self.get_done_tiles(service, zoom, row)
             for col in range(left, right):
-                if col not in tiles:
-                    self.download_tile(service, zoom, row, col, ignore_water)
-                    uploaded += 1
+                if (row, col) not in done_tiles:
+                    tile_data = self.download_tile(service, zoom, row, col)
+                    if tile_data is None:
+                        continue
+
+                    is_water = self.is_water(service, tile_data)
+                    if not is_water or not ignore_water:
+                        self.upload_to_s3(service, zoom, row, col, tile_data)
+                        uploaded += 1
+
+                    tiles_to_be_done.append((service, zoom, row, col, is_water))
+
+                    print(bar, end='\r')
 
                 bar.numerator += 1
-                print(bar, end='\r')
 
-            self.db.commit()
+            self.set_done_tiles(tiles_to_be_done)
+            tiles_to_be_done = []
 
         print()
         print(f'Total uploaded: {uploaded}/{total_count}')
